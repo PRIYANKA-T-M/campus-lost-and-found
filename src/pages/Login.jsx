@@ -1,4 +1,4 @@
-import { loginWithGoogle } from "src/services/authService";
+import { loginWithGoogle } from "../services/authservice";
 import { useNavigate } from "react-router-dom";
 
 function Login() {

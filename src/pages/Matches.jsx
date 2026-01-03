@@ -1,81 +1,53 @@
-import { useEffect, useState } from "react";
-import { getAllMatches } from "../services/matchService";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, getDocs, addDoc } from "firebase/firestore";
 import { db } from "../services/firebase";
-import ItemCard from "../components/ItemCard";
-import Navbar from "../components/Navbar";
-import { useNavigate } from "react-router-dom";
+import { askGemini } from "../services/geminiService";
 
-function Matches() {
-  const [matches, setMatches] = useState([]);
-  const navigate = useNavigate();
+/**
+ * Create AI match when a new item is posted
+ */
+export const findMatch = async (newItem, oppositeItems) => {
+  const prompt = `
+Lost/Found Item:
+${JSON.stringify(newItem)}
 
-  useEffect(() => {
-    const loadMatches = async () => {
-      const matchDocs = await getAllMatches();
+Possible Matches:
+${JSON.stringify(oppositeItems)}
 
-      const enriched = await Promise.all(
-        matchDocs.map(async (m) => {
-          const lostSnap = await getDoc(doc(db, "items", m.lostItemId));
-          const foundSnap = await getDoc(doc(db, "items", m.foundItemId));
-
-          return {
-            ...m,
-            lostItem: { id: lostSnap.id, ...lostSnap.data() },
-            foundItem: { id: foundSnap.id, ...foundSnap.data() },
-          };
-        })
-      );
-
-      setMatches(enriched);
-    };
-
-    loadMatches();
-  }, []);
-
-  return (
-    <>
-      <Navbar />
-      <h2 style={{ textAlign: "center" }}>🤖 AI Matches</h2>
-
-      {matches.length === 0 && (
-        <p style={{ textAlign: "center" }}>No matches yet</p>
-      )}
-
-      {matches.map(match => (
-        <div key={match.id} style={styles.matchBox}>
-          <div style={styles.items}>
-            <ItemCard item={match.lostItem} />
-            <ItemCard item={match.foundItem} />
-          </div>
-
-          <p>
-            <b>Confidence:</b> {match.confidence}%
-          </p>
-
-          <button
-            onClick={() => navigate(`/claim/${match.lostItem.id}`)}
-          >
-            Claim Item
-          </button>
-        </div>
-      ))}
-    </>
-  );
+Return JSON ONLY:
+{
+  "matchedItemId": "string",
+  "confidence": number
 }
+`;
 
-const styles = {
-  matchBox: {
-    border: "2px solid #ddd",
-    padding: "20px",
-    margin: "20px",
-    borderRadius: "10px",
-  },
-  items: {
-    display: "flex",
-    gap: "20px",
-    flexWrap: "wrap",
-  },
+  const response = await askGemini(prompt);
+
+  try {
+    const match = JSON.parse(response);
+
+    if (match.confidence >= 70) {
+      await addDoc(collection(db, "matches"), {
+        lostItemId:
+          newItem.type === "lost" ? newItem.id : match.matchedItemId,
+        foundItemId:
+          newItem.type === "found" ? newItem.id : match.matchedItemId,
+        confidence: match.confidence,
+        createdAt: new Date(),
+      });
+    }
+  } catch (err) {
+    console.error("Match parsing failed", err);
+  }
 };
 
-export default Matches;
+/**
+ * 🔥 THIS EXPORT IS REQUIRED BY Matches.jsx
+ */
+export const getAllMatches = async () => {
+  const snapshot = await getDocs(collection(db, "matches"));
+
+  return snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+};
